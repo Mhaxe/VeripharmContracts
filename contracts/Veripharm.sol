@@ -3,40 +3,20 @@ pragma solidity ^0.8.0;
 
 contract Veripharm {
 
-    enum Role { Unassigned, Manufacturer, Distributor, Pharmacist }
+    event LogMessage(string message);
 
-    struct DrugBatch {
-        string batchId;
-        string drugName;
-        string manufacturer;
-        uint256 manufactureDate;
-        uint256 expiryDate;
-        address currentHolder;
-        bool isRegistered;
-        bool isRevoked;
+    function logEvent(string memory message) public {
+        emit LogMessage(message);
     }
 
-    mapping(string => DrugBatch) public drugBatches;
-    mapping(string => address[]) public custodyTrail;
+    enum Role { Unassigned, Manufacturer, Distributor, Pharmacist }
+
     mapping(address => Role) public roles;
 
-    event DrugRegistered(string batchId, string drugName, address indexed manufacturer);
-    event CustodyTransferred(string batchId, address indexed from, address indexed to);
-    event Alert(string message, string batchId);
-    event DrugRevoked(string batchId, string reason);
+    event Log(string message);
 
     modifier onlyRole(Role _role) {
         require(roles[msg.sender] == _role, "Access denied for this role");
-        _;
-    }
-
-    modifier onlyRegistered(string memory _batchId) {
-        require(drugBatches[_batchId].isRegistered, "Drug not registered");
-        _;
-    }
-
-    modifier notRevoked(string memory _batchId) {
-        require(!drugBatches[_batchId].isRevoked, "Drug batch has been revoked");
         _;
     }
 
@@ -44,79 +24,101 @@ contract Veripharm {
         roles[_user] = _role;
     }
 
-    function registerDrug(
+    function logDrugCreated(
         string memory _batchId,
         string memory _drugName,
-        string memory _manufacturer,
-        uint256 _manufactureDate,
-        uint256 _expiryDate
+        uint256 _quantity
     ) public onlyRole(Role.Manufacturer) {
-        require(!drugBatches[_batchId].isRegistered, "Batch already registered");
-
-        drugBatches[_batchId] = DrugBatch({
-            batchId: _batchId,
-            drugName: _drugName,
-            manufacturer: _manufacturer,
-            manufactureDate: _manufactureDate,
-            expiryDate: _expiryDate,
-            currentHolder: msg.sender,
-            isRegistered: true,
-            isRevoked: false
-        });
-
-        custodyTrail[_batchId].push(msg.sender);
-
-        emit DrugRegistered(_batchId, _drugName, msg.sender);
+        emit Log(
+            string(
+                abi.encodePacked(
+                    "Manufacturer (",
+                    toAsciiString(msg.sender),
+                    ") created ",
+                    uintToString(_quantity),
+                    " drugs (",
+                    _batchId,
+                    ") of ",
+                    _drugName
+                )
+            )
+        );
     }
 
-    function transferCustody(string memory _batchId, address _to)
-        public
-        onlyRegistered(_batchId)
-        notRevoked(_batchId)
-    {
-        require(drugBatches[_batchId].currentHolder == msg.sender, "Not current holder");
-        require(_to != address(0), "Invalid recipient address");
-        require(block.timestamp < drugBatches[_batchId].expiryDate, "Drug has expired");
-
-        address previousHolder = msg.sender;
-        drugBatches[_batchId].currentHolder = _to;
-        custodyTrail[_batchId].push(_to);
-
-        emit CustodyTransferred(_batchId, previousHolder, _to);
+    function logTransfer(
+        string memory _batchId,
+        string memory _toRole,
+        address _to
+    ) public {
+        emit Log(
+            string(
+                abi.encodePacked(
+                    toAsciiString(msg.sender),
+                    " transferred ",
+                    _batchId,
+                    " to ",
+                    _toRole,
+                    " (",
+                    toAsciiString(_to),
+                    ")"
+                )
+            )
+        );
     }
 
-    function revokeDrug(string memory _batchId, string memory _reason)
-        public
-        onlyRole(Role.Manufacturer)
-        onlyRegistered(_batchId)
-    {
-        drugBatches[_batchId].isRevoked = true;
-        emit DrugRevoked(_batchId, _reason);
+    function logVerification(
+        string memory _batchId,
+        bool isVerified
+    ) public {
+        emit Log(
+            string(
+                abi.encodePacked(
+                    "Drug ",
+                    _batchId,
+                    isVerified ? " verified as authentic" : " failed verification"
+                )
+            )
+        );
     }
 
-    function getCustodyTrail(string memory _batchId)
-        public
-        view
-        onlyRegistered(_batchId)
-        returns (address[] memory)
-    {
-        return custodyTrail[_batchId];
-    }
+    // --------------------------
+    // Utility Functions Below
+    // --------------------------
 
-    function verifyAuthenticity(string memory _batchId)
-        public
-        view
-        returns (bool isValid, string memory status)
-    {
-        if (!drugBatches[_batchId].isRegistered) {
-            return (false, "Not registered");
+    function uintToString(uint256 v) internal pure returns (string memory) {
+        if (v == 0) return "0";
+        uint256 j = v;
+        uint256 length;
+        while (j != 0) {
+            length++;
+            j /= 10;
         }
-        if (drugBatches[_batchId].isRevoked) {
-            return (false, "Revoked");
+        bytes memory bstr = new bytes(length);
+        uint256 k = length;
+        while (v != 0) {
+            k--;
+            bstr[k] = bytes1(uint8(48 + v % 10));
+            v /= 10;
         }
-        if (block.timestamp >= drugBatches[_batchId].expiryDate) {
-            return (false, "Expired");
+        return string(bstr);
+    }
+
+    function toAsciiString(address x) internal pure returns (string memory) {
+        bytes memory s = new bytes(42);
+        s[0] = '0';
+        s[1] = 'x';
+        for (uint256 i = 0; i < 20; i++) {
+            bytes1 b = bytes1(uint8(uint256(uint160(x)) / (2**(8*(19 - i)))));
+            bytes1 hi = bytes1(uint8(b) / 16);
+            bytes1 lo = bytes1(uint8(b) - 16 * uint8(hi));
+            s[2*i + 2] = char(hi);
+            s[2*i + 3] = char(lo);
         }
-        return (true, "Valid and authentic");
+        return string(s);
+    }
+
+    function char(bytes1 b) internal pure returns (bytes1 c) {
+        if (uint8(b) < 10) return bytes1(uint8(b) + 48);
+        else return bytes1(uint8(b) + 87);
     }
 }
